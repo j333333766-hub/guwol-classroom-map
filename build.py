@@ -91,5 +91,90 @@ css = """
 rep("</style></head>", css + "</style></head>")
 rep("<title>구월중학교 교실배치도</title>",
     '<title>구월중학교 교실배치도</title><meta name="theme-color" content="#0f3d6e"><meta name="description" content="구월중학교 교실배치도와 교실 길찾기">')
+# 4) 휴대폰 길찾기: 층별 단계로 나누어 확대 (수능 앱 map-steps.js·css 그대로, 11/8)
+import os
+here = os.path.dirname(os.path.abspath(__file__))
+steps_js = open(os.path.join(here, 'map-steps.js'), encoding='utf-8').read().replace(chr(13)+chr(10), chr(10))
+steps_css = open(os.path.join(here, 'map-steps.css'), encoding='utf-8').read().replace(chr(13)+chr(10), chr(10))
+panel = ('<section id="step-panel" class="step-panel" hidden aria-live="polite"><p id="step-count"></p><h3 id="step-title"></h3><p id="step-text"></p>'
+         '<div class="step-nav"><button id="step-prev" type="button">이전</button><button id="step-next" type="button">다음</button></div>'
+         '<div class="step-sub"><button id="step-all" type="button">전체 지도 보기</button><button id="step-share" class="share-route" type="button">길찾기 주소 공유</button></div></section>\n')
+rep('<div class="paper-scroll" role="region"', panel + '<div class="paper-scroll" role="region"')
+rep("paper.classList.remove('has-route');", "paper.classList.remove('has-route');hideSteps();setRouteUrl(null);")
+rep("paper.classList.add('has-route');routeDetails.hidden=false;",
+    "paper.classList.add('has-route');routeDetails.hidden=false;"
+    "result.append(shareBox());setRouteUrl(route);showSteps(route,room);")
+i = s.index('  function renderRoute() {')
+s = s[:i] + steps_js + s[i:]
+# 단계 보기 중에는 지도 위치를 단계가 정하므로 지도로 스크롤하지 않고, 확대 단추·손가락 확대도 쉰다.
+rep("routeDetails.open=true;\n    document.querySelector('.paper-scroll').scrollIntoView({block:'start',behavior:'smooth'});",
+    "routeDetails.open=true;\n    if(!document.body.classList.contains('step-mobile'))document.querySelector('.paper-scroll').scrollIntoView({block:'start',behavior:'smooth'});")
+rep("    value=Math.max(1,Math.min(ZOOM_MAX,value));",
+    "    if(frame.classList.contains('zoomed'))return;\n    value=Math.max(1,Math.min(ZOOM_MAX,value));")
+
+# 5) 길찾기 주소 공유: ?to=교실&lift=1(엘리베이터)|0(계단)&from=입구번호  (11/8)
+#    to 는 교실 id(room-55) 또는 이름(3-5). 주소로 열면 같은 조건의 길찾기가 바로 나온다.
+i = s.index('  function renderRoute() {')
+s = s[:i] + """  // 길찾기 조건(목적지·엘리베이터·입구)을 주소에 담아 공유합니다.
+  const initialQuery=location.search;
+  function routeQuery(route) {
+    const q=new URLSearchParams(location.search);['to','lift','from'].forEach(k=>q.delete(k));
+    if(route){q.set('to',route.destination);q.set('lift',route.useElevator?'1':'0');if(!route.useElevator)q.set('from',route.origin.replace('entrance-',''));}
+    return q.toString();
+  }
+  function setRouteUrl(route) {
+    const q=routeQuery(route),url=location.pathname+(q?'?'+q:'')+location.hash;
+    if(url!==location.pathname+location.search+location.hash)window.history.replaceState(null,'',url);
+  }
+  function shareBox() {
+    const box=document.createElement('div');box.className='share-box';
+    const button=document.createElement('button');button.type='button';button.className='share-route';button.textContent='길찾기 주소 공유';
+    const p=document.createElement('p');p.textContent='이 주소를 받은 사람은 같은 목적지·엘리베이터·입구 조건의 길찾기를 바로 볼 수 있어요.';
+    box.append(button,p);return box;
+  }
+  async function shareRoute(button) {
+    const route=window.currentSchoolRoute;if(!route)return;
+    const url=location.origin+location.pathname+'?'+routeQuery(route),room=roomMap.get(route.destination).label.replaceAll('\\n','');
+    const done=text=>{const old=button.dataset.label||button.textContent;button.dataset.label=old;button.textContent=text;clearTimeout(button._t);button._t=setTimeout(()=>button.textContent=old,2200);};
+    if(navigator.share&&matchMedia('(pointer:coarse)').matches) {
+      try{await navigator.share({title:'구월중학교 '+room+' 가는 길',text:'구월중학교 '+room+' 가는 길',url});return;}catch(e){if(e.name==='AbortError')return;}
+    }
+    try{await navigator.clipboard.writeText(url);done('주소를 복사했어요');}
+    catch(e){
+      const input=document.createElement('input');input.value=url;input.readOnly=true;input.className='share-url';
+      button.parentElement.querySelector('.share-url')?.remove();button.after(input);input.select();done('주소를 길게 눌러 복사하세요');
+    }
+  }
+  document.addEventListener('click',event=>{const b=event.target.closest('.share-route');if(b)shareRoute(b);});
+  function openFromUrl() {
+    const q=new URLSearchParams(initialQuery),to=q.get('to');if(!to)return;
+    const room=roomMap.get(to)||model.rooms.find(r=>r.label.replaceAll('\\n','')===to);
+    if(!room||!graph.roomNodes.has(room.id)){setRouteUrl(null);return;}
+    state.destination=room.id;const lift=q.get('lift');let from=q.get('from');
+    if(lift==='1'){state.useElevator=true;state.origin='entrance-2';setStage('elevator');showRoute();}
+    else if(lift==='0'){
+      state.useElevator=false;
+      if(room.building==='신관'&&from==='3')from='4';
+      if(/^[1-4]$/.test(from||'')){state.origin='entrance-'+from;setStage('entrance');showRoute();}
+      else{setStage('entrance');showEntrances();}
+    }
+    else askElevator();
+  }
+""" + s[i:]
+rep("fitMap();measureTextLimits();setTextSize(textSize);setStage('idle');",
+    "fitMap();measureTextLimits();setTextSize(textSize);setStage('idle');openFromUrl();")
+css2 = steps_css + """
+.step-sub { display:flex; gap:6px; margin-top:6px; }
+.step-sub #step-all { flex:1; margin:0; }
+.step-sub .share-route { flex:1; min-height:38px; border:1.5px solid #1668b8; border-radius:9px; background:#fff; color:#1668b8; font-size:14px; font-weight:700; }
+.share-box { margin-top:10px; padding-top:10px; border-top:1px solid #e6ebf0; }
+.share-box .share-route { padding:9px 14px; border:1.5px solid #1668b8; border-radius:9px; background:#fff; color:#1668b8; font-size:14px; font-weight:700; }
+.share-box p { margin:6px 0 0; color:#62707f; font-size:12px; }
+.share-url { display:block; width:100%; margin-top:6px; padding:8px; border:1px solid #bac8d5; border-radius:7px; font-size:13px; }
+body:has(.paper-stage.zoomed) .zoom-bar { display:none; }
+@media print { .share-box { display:none!important; } }
+"""
+rep("</style></head>", css2 + "</style></head>")
+
 open(out, 'w', encoding='utf-8', newline='').write(s.replace(chr(10), chr(13)+chr(10)) if crlf else s)
 print('ok', len(s))

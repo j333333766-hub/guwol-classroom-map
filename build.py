@@ -100,10 +100,11 @@ panel = ('<section id="step-panel" class="step-panel" hidden aria-live="polite">
          '<div class="step-nav"><button id="step-prev" type="button">이전</button><button id="step-next" type="button">다음</button></div>'
          '<div class="step-sub"><button id="step-all" type="button">전체 지도 보기</button><button id="step-share" class="share-route" type="button">길찾기 주소 공유</button></div></section>\n')
 rep('<div class="paper-scroll" role="region"', panel + '<div class="paper-scroll" role="region"')
-rep("paper.classList.remove('has-route');", "paper.classList.remove('has-route');hideSteps();setRouteUrl(null);")
+rep("paper.classList.remove('has-route');", "paper.classList.remove('has-route');hideSteps();")
+rep("    state.stage=stage;paper.dataset.routeStage=stage;", "    state.stage=stage;paper.dataset.routeStage=stage;setRouteUrl();")
 rep("paper.classList.add('has-route');routeDetails.hidden=false;",
     "paper.classList.add('has-route');routeDetails.hidden=false;"
-    "result.append(shareBox());setRouteUrl(route);showSteps(route,room);")
+    "result.append(shareBox());setRouteUrl();showSteps(route,room);")
 i = s.index('  function renderRoute() {')
 s = s[:i] + steps_js + s[i:]
 # 단계 보기 중에는 지도 위치를 단계가 정하므로 지도로 스크롤하지 않고, 확대 단추·손가락 확대도 쉰다.
@@ -122,9 +123,22 @@ s = s[:i] + """  // 길찾기 조건(목적지·엘리베이터·입구)을 주�
     if(route){q.set('to',route.destination);q.set('lift',route.useElevator?'1':'0');if(!route.useElevator)q.set('from',route.origin.replace('entrance-',''));}
     return q.toString();
   }
-  function setRouteUrl(route) {
-    const q=routeQuery(route),url=location.pathname+(q?'?'+q:'')+location.hash;
-    if(url!==location.pathname+location.search+location.hash)window.history.replaceState(null,'',url);
+  // 주소는 한 동작이 끝난 뒤 한 번만 바꿉니다(브라우저가 잦은 주소 변경을 막기 때문).
+  // 엘리베이터 질문·입구 고르기 중에도 지금까지 정한 조건(목적지, 계단)을 주소에 남깁니다.
+  let urlQueued=false;
+  function setRouteUrl() {
+    if(urlQueued)return;urlQueued=true;
+    queueMicrotask(()=>{
+      urlQueued=false;const q=new URLSearchParams(location.search);['to','lift','from'].forEach(k=>q.delete(k));
+      const route=window.currentSchoolRoute;
+      if(state.destination&&['elevator','entrance','route'].includes(state.stage)) {
+        q.set('to',state.destination);
+        if(state.useElevator!==null)q.set('lift',state.useElevator?'1':'0');
+        if(state.useElevator===false&&route&&state.stage==='route')q.set('from',route.origin.replace('entrance-',''));
+      }
+      const text=q.toString(),url=location.pathname+(text?'?'+text:'')+location.hash;
+      if(url!==location.pathname+location.search+location.hash)window.history.replaceState(null,'',url);
+    });
   }
   function shareBox() {
     const box=document.createElement('div');box.className='share-box';
@@ -149,7 +163,7 @@ s = s[:i] + """  // 길찾기 조건(목적지·엘리베이터·입구)을 주�
   function openFromUrl() {
     const q=new URLSearchParams(initialQuery),to=q.get('to');if(!to)return;
     const room=roomMap.get(to)||model.rooms.find(r=>r.label.replaceAll('\\n','')===to);
-    if(!room||!graph.roomNodes.has(room.id)){setRouteUrl(null);return;}
+    if(!room||!graph.roomNodes.has(room.id)){setRouteUrl();return;}
     state.destination=room.id;const lift=q.get('lift');let from=q.get('from');
     if(lift==='1'){state.useElevator=true;state.origin='entrance-2';setStage('elevator');showRoute();}
     else if(lift==='0'){

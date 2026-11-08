@@ -771,7 +771,7 @@ body:has(.paper-stage.zoomed) .zoom-bar { display:none; }
   }
   function clearRoute() {
     numberPositions.length=0;transferBoxes.length=0;
-    paths.replaceChildren();caption.textContent='';paper.classList.remove('has-route');hideSteps();setRouteUrl(null);
+    paths.replaceChildren();caption.textContent='';paper.classList.remove('has-route');hideSteps();
     document.querySelectorAll('.origin-selected').forEach(e=>e.classList.remove('origin-selected'));
     result.replaceChildren();routeDetails.hidden=true;routeDetails.open=false;window.currentSchoolRoute=null;
   }
@@ -843,9 +843,22 @@ body:has(.paper-stage.zoomed) .zoom-bar { display:none; }
     if(route){q.set('to',route.destination);q.set('lift',route.useElevator?'1':'0');if(!route.useElevator)q.set('from',route.origin.replace('entrance-',''));}
     return q.toString();
   }
-  function setRouteUrl(route) {
-    const q=routeQuery(route),url=location.pathname+(q?'?'+q:'')+location.hash;
-    if(url!==location.pathname+location.search+location.hash)window.history.replaceState(null,'',url);
+  // 주소는 한 동작이 끝난 뒤 한 번만 바꿉니다(브라우저가 잦은 주소 변경을 막기 때문).
+  // 엘리베이터 질문·입구 고르기 중에도 지금까지 정한 조건(목적지, 계단)을 주소에 남깁니다.
+  let urlQueued=false;
+  function setRouteUrl() {
+    if(urlQueued)return;urlQueued=true;
+    queueMicrotask(()=>{
+      urlQueued=false;const q=new URLSearchParams(location.search);['to','lift','from'].forEach(k=>q.delete(k));
+      const route=window.currentSchoolRoute;
+      if(state.destination&&['elevator','entrance','route'].includes(state.stage)) {
+        q.set('to',state.destination);
+        if(state.useElevator!==null)q.set('lift',state.useElevator?'1':'0');
+        if(state.useElevator===false&&route&&state.stage==='route')q.set('from',route.origin.replace('entrance-',''));
+      }
+      const text=q.toString(),url=location.pathname+(text?'?'+text:'')+location.hash;
+      if(url!==location.pathname+location.search+location.hash)window.history.replaceState(null,'',url);
+    });
   }
   function shareBox() {
     const box=document.createElement('div');box.className='share-box';
@@ -870,7 +883,7 @@ body:has(.paper-stage.zoomed) .zoom-bar { display:none; }
   function openFromUrl() {
     const q=new URLSearchParams(initialQuery),to=q.get('to');if(!to)return;
     const room=roomMap.get(to)||model.rooms.find(r=>r.label.replaceAll('\n','')===to);
-    if(!room||!graph.roomNodes.has(room.id)){setRouteUrl(null);return;}
+    if(!room||!graph.roomNodes.has(room.id)){setRouteUrl();return;}
     state.destination=room.id;const lift=q.get('lift');let from=q.get('from');
     if(lift==='1'){state.useElevator=true;state.origin='entrance-2';setStage('elevator');showRoute();}
     else if(lift==='0'){
@@ -913,10 +926,10 @@ body:has(.paper-stage.zoomed) .zoom-bar { display:none; }
     if(state.useElevator) {
       const p=document.createElement('p');p.className='mobility-note';p.textContent=transfers.some(e=>e.kind==='elevator')?'본관 층간 이동에는 엘리베이터를 이용합니다. 신관 층간 이동은 계단으로 안내합니다.':'이 경로에는 본관 층간 이동이 없어 엘리베이터를 타지 않습니다. 신관 층간 이동은 계단으로 안내합니다.';result.append(p);
     }
-    caption.textContent=steps.join(' → ');paper.classList.add('has-route');routeDetails.hidden=false;result.append(shareBox());setRouteUrl(route);showSteps(route,room);
+    caption.textContent=steps.join(' → ');paper.classList.add('has-route');routeDetails.hidden=false;result.append(shareBox());setRouteUrl();showSteps(route,room);
   }
   function setStage(stage) {
-    state.stage=stage;paper.dataset.routeStage=stage;
+    state.stage=stage;paper.dataset.routeStage=stage;setRouteUrl();
     paper.classList.toggle('choosing-destination',stage==='destination');paper.classList.toggle('choosing-entrance',stage==='entrance');paper.classList.toggle('editing',stage==='edit'||stage==='swap');
     document.getElementById('edit-undo').hidden=stage!=='edit';document.getElementById('version-save').hidden=stage!=='edit';document.getElementById('flow-cancel').textContent=stage==='edit'||stage==='swap'?'완료':'취소';
     guidance.hidden=stage==='idle';backButton.hidden=stage==='idle'||stage==='edit';
